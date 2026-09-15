@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -11,6 +11,51 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Links de invitación/magic link/recuperación llegan aquí de 3 formas
+  // posibles según la plantilla de correo de Supabase: ?code= (PKCE),
+  // ?token_hash=&type= (OTP), o #access_token= (implícito, ya procesado por
+  // el cliente al construirse). Cubrimos las tres antes de revisar sesión.
+  useEffect(() => {
+    const supabase = createClient();
+
+    async function completeAuthFromUrl() {
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get("code");
+      const tokenHash = url.searchParams.get("token_hash");
+      const type = url.searchParams.get("type");
+
+      if (code) {
+        await supabase.auth.exchangeCodeForSession(code);
+      } else if (tokenHash && type) {
+        await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: type as "invite" | "magiclink" | "recovery" | "email",
+        });
+      } else if (window.location.hash.includes("access_token")) {
+        const hashParams = new URLSearchParams(window.location.hash.slice(1));
+        const accessToken = hashParams.get("access_token");
+        const refreshToken = hashParams.get("refresh_token");
+        if (accessToken && refreshToken) {
+          await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+        }
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (session) {
+        router.push("/plataforma");
+        router.refresh();
+      }
+    }
+
+    completeAuthFromUrl();
+  }, [router]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
